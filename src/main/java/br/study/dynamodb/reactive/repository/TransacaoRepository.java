@@ -1,0 +1,146 @@
+package br.study.dynamodb.reactive.repository;
+
+import br.study.dynamodb.reactive.builder.TransacaoBuilder;
+import br.study.dynamodb.reactive.builder.TransacaoDTOBuilder;
+import br.study.dynamodb.reactive.dto.OperacaoBandeiraDTO;
+import br.study.dynamodb.reactive.dto.ParceiroDTO;
+import br.study.dynamodb.reactive.dto.TransacaoDTO;
+import br.study.dynamodb.reactive.model.*;
+import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
+import software.amazon.awssdk.enhanced.dynamodb.DynamoDbAsyncTable;
+import software.amazon.awssdk.enhanced.dynamodb.DynamoDbEnhancedAsyncClient;
+import software.amazon.awssdk.enhanced.dynamodb.TableSchema;
+import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+
+@Component
+public class TransacaoRepository {
+    private DynamoDbAsyncClient dynamoDbClient;
+    private DynamoDbEnhancedAsyncClient dynamoDbEnhancedClient;
+
+    private static final String TABLE_NAME = "core";
+    private static final String GSI1_INDEX = "GSI1";
+    private static final String GSI2_INDEX = "GSI2";
+
+    private TableSchema<Transacao> transacaoTableSchema;
+    private DynamoDbAsyncTable<Transacao> transacaoTable;
+
+    private TableSchema<TransacaoBandeira> operacaoBandeiraTableSchema;
+    private DynamoDbAsyncTable<TransacaoBandeira> operacaoBandeiraTable;
+
+    private TableSchema<Pagador> pagadorTableSchema;
+    private DynamoDbAsyncTable<Pagador> pagadorDynamoDbTable;
+
+    private TableSchema<Recebedor> recebedorTableSchema;
+    private DynamoDbAsyncTable<Recebedor> recebedorDynamoDbTable;
+
+    private TableSchema<Parceiro> parceiroTableSchema;
+    private DynamoDbAsyncTable<Parceiro> parceiroDynamoDbTable;
+
+
+    public TransacaoRepository(DynamoDbAsyncClient dynamoDbClient, DynamoDbEnhancedAsyncClient dynamoDbEnhancedAsyncClient) {
+        this.dynamoDbClient = dynamoDbClient;
+        this.dynamoDbEnhancedClient = dynamoDbEnhancedAsyncClient;
+
+        operacaoBandeiraTableSchema = TableSchema.fromClass(TransacaoBandeira.class);
+        operacaoBandeiraTable = dynamoDbEnhancedClient.table(TABLE_NAME, operacaoBandeiraTableSchema);
+
+        transacaoTableSchema = TableSchema.fromClass(Transacao.class);
+        transacaoTable = dynamoDbEnhancedClient.table(TABLE_NAME, transacaoTableSchema);
+
+        pagadorTableSchema = TableSchema.fromClass(Pagador.class);
+        pagadorDynamoDbTable = dynamoDbEnhancedClient.table(TABLE_NAME, pagadorTableSchema);
+
+        recebedorTableSchema = TableSchema.fromClass(Recebedor.class);
+        recebedorDynamoDbTable = dynamoDbEnhancedClient.table(TABLE_NAME, recebedorTableSchema);
+
+        parceiroTableSchema = TableSchema.fromClass(Parceiro.class);
+        parceiroDynamoDbTable = dynamoDbEnhancedClient.table(TABLE_NAME, parceiroTableSchema);
+    }
+
+    public Mono<TransacaoDTO> saveTransacaAsync(TransacaoDTO transacaoDTO) {
+
+        CompletableFuture future = transacaoTable.putItem(TransacaoBuilder.buildTraansacao(transacaoDTO));
+
+        if (transacaoDTO.getParceiro() != null) {
+            future.thenCompose(s -> parceiroDynamoDbTable.putItem(TransacaoBuilder.buildParceiro(transacaoDTO.getParceiro(), transacaoDTO.getNumeroTransacao())));
+        }
+
+        if (transacaoDTO.getPull() != null) {
+            future.thenCompose(s -> pagadorDynamoDbTable.putItem(TransacaoBuilder.buildPagador(transacaoDTO.getPull().getDadosPortador(), transacaoDTO.getNumeroTransacao())));
+            future.thenCompose(s -> operacaoBandeiraTable.putItem(TransacaoBuilder.buildTransacaobandeira(transacaoDTO.getPull().getDadosBandeira(), transacaoDTO.getNumeroTransacao(), null, "PULL")));
+        }
+
+        if (transacaoDTO.getPush() != null) {
+            for (OperacaoBandeiraDTO operacaoBandeiraDTO : transacaoDTO.getPush()) {
+                String id = UUID.randomUUID().toString();
+                future.thenCompose(s -> recebedorDynamoDbTable.putItem(TransacaoBuilder.buildRecebedor(operacaoBandeiraDTO.getDadosPortador(), transacaoDTO.getNumeroTransacao(), id)));
+                future.thenCompose(s -> operacaoBandeiraTable.putItem(TransacaoBuilder.buildTransacaobandeira(operacaoBandeiraDTO.getDadosBandeira(), transacaoDTO.getNumeroTransacao(), id, "PUSH")));
+            }
+        }
+        return Mono.fromFuture(future)
+                .map(response -> {
+                    return transacaoDTO;
+                });
+    }
+
+    public Mono<TransacaoDTO> findTransacaoByNumeroTransacao(String numeroTransacao) {
+        Map<String, AttributeValue> eav = new HashMap<>();
+        eav.put(":idTransacao", AttributeValue.builder().s("TRXID#" + numeroTransacao).build());
+
+        QueryRequest queryRequest = QueryRequest.builder()
+                .tableName(TABLE_NAME)
+                .keyConditionExpression("PK =:idTransacao")
+                .expressionAttributeValues(eav).build();
+
+
+        return Mono.fromFuture(dynamoDbClient.query(queryRequest))
+                .map(response -> {
+                    return loadTransacao(response.items());
+                });
+    }
+
+    private TransacaoDTO loadTransacao(List<Map<String, AttributeValue>> items) {
+        TransacaoDTOBuilder transacaoBuilder = new TransacaoDTOBuilder();
+        for (Map<String, AttributeValue> item : items) {
+            AttributeValue entidade = item.get("entidade");
+
+            switch (entidade.s()) {
+                case (Transacao.ENTIDADE):
+                    Transacao transacao = transacaoTableSchema.mapToItem(item);
+                    transacaoBuilder.transacaoToDTO(transacao);
+                    break;
+                case (TransacaoBandeira.ENTIDADE):
+                    TransacaoBandeira operacaoBandeira = operacaoBandeiraTableSchema.mapToItem(item);
+                    if ("PULL".equals(operacaoBandeira.getOperacao())) {
+                        transacaoBuilder.addOperacaoPullToTransacao(operacaoBandeira);
+                    } else {
+                        transacaoBuilder.addTransacaoPush(operacaoBandeira);
+                    }
+                    break;
+                case Pagador.ENTIDADE:
+                    Pagador pagador = pagadorTableSchema.mapToItem(item);
+                    transacaoBuilder.addPagadorToPullTransacao(pagador);
+                    break;
+                case Recebedor.ENTIDADE:
+                    Recebedor recebedor = recebedorTableSchema.mapToItem(item);
+                    transacaoBuilder.addRecebedor(recebedor);
+                    break;
+                case Parceiro.ENTIDADE:
+                    Parceiro parceiro = parceiroTableSchema.mapToItem(item);
+                    transacaoBuilder.addParceiroToTransacao(parceiro);
+                    break;
+            }
+        }
+
+        return transacaoBuilder.build();
+    }
+}
