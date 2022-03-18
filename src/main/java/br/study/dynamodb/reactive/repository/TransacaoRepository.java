@@ -3,9 +3,9 @@ package br.study.dynamodb.reactive.repository;
 import br.study.dynamodb.reactive.builder.TransacaoBuilder;
 import br.study.dynamodb.reactive.builder.TransacaoDTOBuilder;
 import br.study.dynamodb.reactive.dto.OperacaoBandeiraDTO;
-import br.study.dynamodb.reactive.dto.ParceiroDTO;
 import br.study.dynamodb.reactive.dto.TransacaoDTO;
 import br.study.dynamodb.reactive.model.*;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 import software.amazon.awssdk.enhanced.dynamodb.DynamoDbAsyncTable;
@@ -14,11 +14,9 @@ import software.amazon.awssdk.enhanced.dynamodb.TableSchema;
 import software.amazon.awssdk.services.dynamodb.DynamoDbAsyncClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
+import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
 @Component
@@ -93,16 +91,8 @@ public class TransacaoRepository {
     }
 
     public Mono<TransacaoDTO> findTransacaoByNumeroTransacao(String numeroTransacao) {
-        Map<String, AttributeValue> eav = new HashMap<>();
-        eav.put(":idTransacao", AttributeValue.builder().s("TRXID#" + numeroTransacao).build());
 
-        QueryRequest queryRequest = QueryRequest.builder()
-                .tableName(TABLE_NAME)
-                .keyConditionExpression("PK =:idTransacao")
-                .expressionAttributeValues(eav).build();
-
-
-        return Mono.fromFuture(dynamoDbClient.query(queryRequest))
+        return Mono.fromFuture(getTransacaoByNumerotransacao(numeroTransacao))
                 .map(response -> {
                     return loadTransacao(response.items());
                 });
@@ -143,4 +133,44 @@ public class TransacaoRepository {
 
         return transacaoBuilder.build();
     }
+
+    public Mono<TransacaoDTO> findTransacaoByIdsbandeiraAndEmissor(String idTransacaoBandeira, String emissor) {
+
+        Map<String, AttributeValue> eav = new HashMap<>();
+        eav.put(":emissor", AttributeValue.builder().s(emissor).build());
+        eav.put(":sk", AttributeValue.builder().s("BID#"+idTransacaoBandeira).build());
+
+        QueryRequest queryRequest = QueryRequest.builder()
+                .tableName(TABLE_NAME)
+                .indexName(GSI2_INDEX)
+                .keyConditionExpression("GSI2_PK =:emissor And GSI2_SK =:sk")
+                .expressionAttributeValues(eav)
+                .build();
+
+        QueryResponse queryResponse = dynamoDbClient.query(queryRequest).join();
+
+        return findTransacaoByNumeroTransacao(queryResponse.items().get(0).get("numeroTransacao").s());
+    }
+
+    private Map<String, AttributeValue> generateInClause(List<String> values){
+        Map<String, AttributeValue> map = new HashMap<>();
+        int count = 0;
+        for (String value : values) {
+            map.put(":id"+count++, AttributeValue.builder().s(value).build());
+        }
+        return map;
+    }
+
+    private CompletableFuture<QueryResponse> getTransacaoByNumerotransacao(String numeroTransacao){
+        Map<String, AttributeValue> eav = new HashMap<>();
+        eav.put(":idTransacao", AttributeValue.builder().s("TRXID#" + numeroTransacao).build());
+
+        QueryRequest queryRequest = QueryRequest.builder()
+                .tableName(TABLE_NAME)
+                .keyConditionExpression("PK =:idTransacao")
+                .expressionAttributeValues(eav).build();
+
+        return dynamoDbClient.query(queryRequest);
+    }
+
 }
