@@ -64,7 +64,7 @@ public class TransacaoRepository {
         parceiroDynamoDbTable = dynamoDbEnhancedClient.table(TABLE_NAME, parceiroTableSchema);
     }
 
-    public Mono<TransacaoDTO> saveTransacaAsync(TransacaoDTO transacaoDTO) {
+    public Mono<TransacaoDTO> saveTransacaoAsync(TransacaoDTO transacaoDTO) {
 
         CompletableFuture future = transacaoTable.putItem(TransacaoBuilder.buildTraansacao(transacaoDTO));
 
@@ -91,6 +91,14 @@ public class TransacaoRepository {
     }
 
     public Mono<TransacaoDTO> findTransacaoByNumeroTransacao(String numeroTransacao) {
+
+        return Mono.fromFuture(getTransacaoByNumerotransacao(numeroTransacao))
+                .map(response -> {
+                    return loadTransacao(response.items());
+                });
+    }
+
+    public Mono<TransacaoDTO> findTransacaoByNumeroTransacaoBandeiraAndEmissor(String numeroTransacao, String emissor) {
 
         return Mono.fromFuture(getTransacaoByNumerotransacao(numeroTransacao))
                 .map(response -> {
@@ -147,9 +155,17 @@ public class TransacaoRepository {
                 .expressionAttributeValues(eav)
                 .build();
 
-        QueryResponse queryResponse = dynamoDbClient.query(queryRequest).join();
+        CompletableFuture<QueryResponse> transacao = dynamoDbClient.query(queryRequest)
+                .thenCompose(transacoesbandeira -> {
+                    String numeroTransacao = transacoesbandeira.items().get(0).get("numeroTransacao").s();
+                    return getTransacaoByNumerotransacao(numeroTransacao);
+                });
 
-        return findTransacaoByNumeroTransacao(queryResponse.items().get(0).get("numeroTransacao").s());
+
+        return Mono.fromFuture(transacao)
+                .map(response -> {
+                    return loadTransacao(response.items());
+                });
     }
 
     private Map<String, AttributeValue> generateInClause(List<String> values){
