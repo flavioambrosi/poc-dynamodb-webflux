@@ -5,9 +5,8 @@ import br.study.dynamodb.reactive.dto.TransacaoDTO;
 import br.study.dynamodb.reactive.repository.TransacaoRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 @RestController
@@ -26,14 +25,25 @@ public class TransacaoController {
     }
 
     @GetMapping("/consulta")
-    public ResponseEntity<TransacaoDTO> findTransacaoByNumeroTransacao(
-            @RequestParam String numerotransacap){
-        return new ResponseEntity(repository.findTransacaoByNumeroTransacao(numerotransacap), HttpStatus.OK);
+    public Mono<TransacaoDTO> findTransacaoByNumeroTransacao(
+            @RequestParam String numerotransacao){
+        return repository.findTransacaoByNumeroTransacao(numerotransacao);
+    }
+
+    @GetMapping()
+    public  Mono<TransacaoDTO> findTransacaoByIdsbandeiraAndEmissores(@RequestParam String idTransacaoBandeira, @RequestParam  String emissor){
+        return repository.findTransacaoByIdsbandeiraAndEmissor(idTransacaoBandeira, emissor);
+
     }
 
     @GetMapping("/transacaoes")
-    public Mono<TransacaoDTO> findTransacaoByIdsbandeiraAndEmissores(@RequestBody FindTransacaoParams findTransacaoParams){
-        return repository.findTransacaoByIdsbandeiraAndEmissor(findTransacaoParams.getIdsTransacaoBandeira().get(0), findTransacaoParams.getEmissores().get(0));
-
+    public Flux<TransacaoDTO> findTransacaoByIdsbandeiraAndEmissoresFlux(@RequestBody FindTransacaoParams findTransacaoParams){
+        return Flux.fromIterable(findTransacaoParams.getEmissores())
+                .flatMap(idEmissor -> {
+                    return Flux.fromIterable(findTransacaoParams.getIdsTransacaoBandeira())
+                            .flatMap(idTransacaoBandeira -> {
+                               return  repository.findTransacaoByIdsbandeiraAndEmissor(idTransacaoBandeira, idEmissor);
+                            });
+                });
     }
 }

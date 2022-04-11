@@ -5,8 +5,10 @@ import br.study.dynamodb.reactive.builder.TransacaoDTOBuilder;
 import br.study.dynamodb.reactive.dto.OperacaoBandeiraDTO;
 import br.study.dynamodb.reactive.dto.TransacaoDTO;
 import br.study.dynamodb.reactive.model.*;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import software.amazon.awssdk.enhanced.dynamodb.DynamoDbAsyncTable;
 import software.amazon.awssdk.enhanced.dynamodb.DynamoDbEnhancedAsyncClient;
@@ -20,6 +22,7 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
 @Component
+@Slf4j
 public class TransacaoRepository {
     private DynamoDbAsyncClient dynamoDbClient;
     private DynamoDbEnhancedAsyncClient dynamoDbEnhancedClient;
@@ -98,9 +101,31 @@ public class TransacaoRepository {
                 });
     }
 
-    public Mono<TransacaoDTO> findTransacaoByNumeroTransacaoBandeiraAndEmissor(String numeroTransacao, String emissor) {
+    public Mono<TransacaoDTO> findTransacaoByIdsbandeiraAndEmissor(String idTransacaoBandeira, String emissor) {
 
-        return Mono.fromFuture(getTransacaoByNumerotransacao(numeroTransacao))
+        Map<String, AttributeValue> eav = new HashMap<>();
+        eav.put(":emissor", AttributeValue.builder().s(emissor).build());
+        eav.put(":sk", AttributeValue.builder().s("BID#" + idTransacaoBandeira).build());
+
+        QueryRequest queryRequest = QueryRequest.builder()
+                .tableName(TABLE_NAME)
+                .indexName(GSI2_INDEX)
+                .keyConditionExpression("GSI2_PK =:emissor And GSI2_SK =:sk")
+                .expressionAttributeValues(eav)
+                .build();
+
+        CompletableFuture<QueryResponse> transacao = dynamoDbClient.query(queryRequest)
+                .thenCompose(transacoesbandeira -> {
+                    if (transacoesbandeira.items().size() > 0 && transacoesbandeira.items().get(0) != null) {
+                        String numeroTransacao = transacoesbandeira.items().get(0).get("numeroTransacao").s();
+                        log.info("Quering transacao {}", numeroTransacao);
+                        return getTransacaoByNumerotransacao(numeroTransacao);
+                    }
+                    return CompletableFuture.completedFuture(null);
+                });
+
+
+        return Mono.fromFuture(transacao)
                 .map(response -> {
                     return loadTransacao(response.items());
                 });
@@ -142,42 +167,8 @@ public class TransacaoRepository {
         return transacaoBuilder.build();
     }
 
-    public Mono<TransacaoDTO> findTransacaoByIdsbandeiraAndEmissor(String idTransacaoBandeira, String emissor) {
 
-        Map<String, AttributeValue> eav = new HashMap<>();
-        eav.put(":emissor", AttributeValue.builder().s(emissor).build());
-        eav.put(":sk", AttributeValue.builder().s("BID#"+idTransacaoBandeira).build());
-
-        QueryRequest queryRequest = QueryRequest.builder()
-                .tableName(TABLE_NAME)
-                .indexName(GSI2_INDEX)
-                .keyConditionExpression("GSI2_PK =:emissor And GSI2_SK =:sk")
-                .expressionAttributeValues(eav)
-                .build();
-
-        CompletableFuture<QueryResponse> transacao = dynamoDbClient.query(queryRequest)
-                .thenCompose(transacoesbandeira -> {
-                    String numeroTransacao = transacoesbandeira.items().get(0).get("numeroTransacao").s();
-                    return getTransacaoByNumerotransacao(numeroTransacao);
-                });
-
-
-        return Mono.fromFuture(transacao)
-                .map(response -> {
-                    return loadTransacao(response.items());
-                });
-    }
-
-    private Map<String, AttributeValue> generateInClause(List<String> values){
-        Map<String, AttributeValue> map = new HashMap<>();
-        int count = 0;
-        for (String value : values) {
-            map.put(":id"+count++, AttributeValue.builder().s(value).build());
-        }
-        return map;
-    }
-
-    private CompletableFuture<QueryResponse> getTransacaoByNumerotransacao(String numeroTransacao){
+    private CompletableFuture<QueryResponse> getTransacaoByNumerotransacao(String numeroTransacao) {
         Map<String, AttributeValue> eav = new HashMap<>();
         eav.put(":idTransacao", AttributeValue.builder().s("TRXID#" + numeroTransacao).build());
 
