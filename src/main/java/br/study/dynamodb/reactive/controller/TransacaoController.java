@@ -3,11 +3,15 @@ package br.study.dynamodb.reactive.controller;
 import br.study.dynamodb.reactive.dto.FindTransacaoParams;
 import br.study.dynamodb.reactive.dto.TransacaoDTO;
 import br.study.dynamodb.reactive.repository.TransacaoRepository;
+import br.study.dynamodb.reactive.response.TransacaoResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/transacao")
@@ -37,7 +41,18 @@ public class TransacaoController {
     }
 
     @GetMapping("/transacaoes")
-    public Flux<TransacaoDTO> findTransacaoByIdsbandeiraAndEmissoresFlux(@RequestBody FindTransacaoParams findTransacaoParams){
+    public Flux<TransacaoResponse> findTransacaoByIdsbandeiraAndEmissoresFlux(@RequestBody FindTransacaoParams findTransacaoParams){
+
+        return getTransacoes(findTransacaoParams)
+                .flatMap( transacaoDTO -> {
+                    return Mono.just(TransacaoResponse.builder().numeroTransacao(transacaoDTO.getNumeroTransacao())
+                            .moeda(transacaoDTO.getMoeda())
+                            .valor(transacaoDTO.getValor())
+                            .build());
+                });
+    }
+
+    private Flux<TransacaoDTO> getTransacoes(FindTransacaoParams findTransacaoParams) {
         return Flux.fromIterable(findTransacaoParams.getEmissores())
                 .flatMap(idEmissor -> {
                     return Flux.fromIterable(findTransacaoParams.getIdsTransacaoBandeira())
